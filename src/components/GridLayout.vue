@@ -1,0 +1,844 @@
+<template>
+  <div class="grid-item" :style="itemStyle">
+    <!-- 如果有子项，渲染子项 -->
+    <div
+      class="grid-item-children"
+      :class="{
+        'drag-over': isDragOver,
+        'capacity-exceeded': isCapacityExceeded,
+        'layout-horizontal': direction === 'horizontal',
+        'layout-vertical': direction === 'vertical',
+        'align-start': align === 'start',
+        'align-center': align === 'center',
+        'align-end': align === 'end',
+        'align-stretch': align === 'stretch',
+      }"
+      @dragover="handleDragOver"
+      @drop="handleDrop"
+      @dragenter="handleDragEnter"
+      @dragleave="handleDragLeave"
+    >
+      <div
+        v-for="(child, index) in children"
+        :key="child.id"
+        class="grid-child"
+        :class="{
+          dragging: dragState.draggedId === child.id,
+          'drag-placeholder': dragState.placeholderIndex === index,
+        }"
+        :style="getChildStyle(child)"
+        draggable="true"
+        @dragstart="handleDragStart($event, child, index)"
+        @dragend="handleDragEnd"
+      >
+        <slot
+          name="cell"
+          :item="{ id, x, y, w, h, children, gap, direction, align }"
+          :child="child"
+        >
+          <div class="default-child-content">
+            {{ child.id }}
+          </div>
+        </slot>
+      </div>
+
+      <!-- 拖拽占位符 -->
+      <div
+        v-if="dragState.showPlaceholder && dragState.targetParentId === id && isDragOver"
+        class="drag-placeholder-visual"
+        :class="{
+          'placeholder-horizontal': direction === 'horizontal',
+          'placeholder-vertical': direction === 'vertical',
+        }"
+        :style="getPlaceholderStyle()"
+      ></div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, watch, inject, computed } from "vue";
+import type { GridCellData, GridLayoutData } from "./type";
+
+// 拖拽状态接口
+interface DragState {
+  draggedId: string | null;
+  draggedData: GridCellData | null;
+  sourceParentId: string | null;
+  targetParentId: string | null;
+  placeholderIndex: number;
+  showPlaceholder: boolean;
+  sourceType?: string;
+}
+
+interface ExtendedGridLayoutData extends GridLayoutData {
+  children?: GridCellData[];
+}
+
+interface ExtendedGridLayoutDataWithDebug extends ExtendedGridLayoutData {
+  debug?: boolean;
+}
+
+const props = withDefaults(defineProps<ExtendedGridLayoutDataWithDebug>(), {
+  gap: 0,
+  children: () => [],
+  direction: "vertical", // 默认纵向排列
+  align: "center", // 默认拉伸对齐
+  debug: false,
+});
+
+// 定义事件
+const emit = defineEmits<{
+  "move-child": [
+    from: { parentId: string; childId: string; index: number },
+    to: { parentId: string; index: number }
+  ];
+  "reorder-children": [parentId: string, fromIndex: number, toIndex: number];
+}>();
+
+// 调试工具
+type DebugLevel = "info" | "warn" | "error" | "start" | "check" | "state";
+
+const debugLog = (level: DebugLevel, message: string, data?: any) => {
+  if (!props.debug) return;
+
+  const prefix = {
+    info: "📝",
+    warn: "⚠️",
+    error: "❌",
+    start: "🚀",
+    check: "🔍",
+    state: "📊",
+  }[level];
+
+  const style = {
+    info: "color: #2196F3",
+    warn: "color: #FF9800",
+    error: "color: #F44336",
+    start: "color: #4CAF50",
+    check: "color: #9C27B0",
+    state: "color: #607D8B",
+  }[level];
+
+  console.groupCollapsed(`%c${prefix} [${props.id}] ${message}`, style);
+  if (data) {
+    console.log(data);
+  }
+  console.groupEnd();
+};
+
+// 全局拖拽状态（在window对象上）
+const getGlobalDragState = (): DragState => {
+  if (!(window as any).__gridDragState) {
+    (window as any).__gridDragState = {
+      draggedId: null,
+      draggedData: null,
+      sourceParentId: null,
+      targetParentId: null,
+      placeholderIndex: -1,
+      showPlaceholder: false,
+      sourceType: undefined,
+    };
+  }
+  return (window as any).__gridDragState;
+};
+
+const setGlobalDragState = (state: Partial<DragState>) => {
+  const globalState = getGlobalDragState();
+  Object.assign(globalState, state);
+};
+
+// 本地拖拽状态
+const dragState = ref<DragState>({
+  draggedId: null,
+  draggedData: null,
+  sourceParentId: null,
+  targetParentId: null,
+  placeholderIndex: -1,
+  showPlaceholder: false,
+  sourceType: undefined,
+});
+
+// 拖拽悬停状态
+const isDragOver = ref(false);
+
+// 容量检测状态
+const isCapacityExceeded = ref(false);
+
+const itemStyle = ref({
+  gridColumnStart: 1,
+  gridColumnEnd: 2,
+  gridRowStart: 1,
+  gridRowEnd: 2,
+});
+
+// 监听props变化更新itemStyle
+watch(
+  () => [props.x, props.y, props.w, props.h, props.gap],
+  () => {
+    itemStyle.value = {
+      gridColumnStart: props.x + 1,
+      gridColumnEnd: props.x + props.w + 1,
+      gridRowStart: props.y + 1,
+      gridRowEnd: props.y + props.h + 1,
+    };
+  },
+  { immediate: true }
+);
+
+// 计算子项样式
+const getChildStyle = (child: GridCellData) => {
+  const baseStyle: any = {
+    boxSizing: "border-box" as const,
+  };
+
+  if (props.direction === "horizontal") {
+    // 横向布局
+    const childWidth = child.w === -1 ? "auto" : `${(child.w / props.w) * 100}%`;
+    const childHeight = child.h === -1 ? "100%" : `${(child.h / props.h) * 100}%`;
+
+    return {
+      ...baseStyle,
+      width: childWidth,
+      height: childHeight,
+      flex: child.w === -1 ? "1" : "none",
+    };
+  } else {
+    // 纵向布局（默认）
+    const childWidth = child.w === -1 ? "100%" : `${(child.w / props.w) * 100}%`;
+    const childHeight = child.h === -1 ? "auto" : `${(child.h / props.h) * 100}%`;
+
+    return {
+      ...baseStyle,
+      width: childWidth,
+      height: childHeight,
+      flex: child.h === -1 ? "1" : "none",
+    };
+  }
+};
+
+// 获取占位符样式
+const getPlaceholderStyle = () => {
+  // 优先使用被拖拽子项的样式
+  const globalState = getGlobalDragState();
+  if (globalState.draggedData) {
+    return getChildStyle(globalState.draggedData);
+  }
+
+  // 备用方案：使用第一个子项的样式作为占位符的基础样式
+  if (props.children.length > 0) {
+    const child = props.children[0];
+    return getChildStyle(child);
+  }
+
+  // 默认占位符样式
+  if (props.direction === "horizontal") {
+    return {
+      width: "100px",
+      height: "100%",
+      boxSizing: "border-box" as const,
+      flex: "none",
+    };
+  } else {
+    return {
+      width: "100%",
+      height: "50px",
+      boxSizing: "border-box" as const,
+      flex: "none",
+    };
+  }
+};
+
+// 检查type兼容性
+const checkTypeCompatibility = (sourceType?: string): boolean => {
+  const targetType = props.type;
+
+  debugLog("check", "Type兼容性检查", {
+    sourceType,
+    targetType,
+    targetId: props.id,
+  });
+
+  // 如果两者都有type，必须相同
+  if (sourceType && targetType) {
+    const isCompatible = sourceType === targetType;
+    debugLog("check", `两者都有type: ${sourceType} ${isCompatible ? "==" : "!="} ${targetType}`, {
+      result: isCompatible ? "兼容" : "不兼容",
+      isCompatible,
+    });
+    return isCompatible;
+  }
+
+  // 如果一个有type一个没有type，不兼容
+  if ((sourceType && !targetType) || (!sourceType && targetType)) {
+    debugLog("check", "一个有type一个没type", {
+      sourceType,
+      targetType,
+      result: "不兼容",
+    });
+    return false;
+  }
+
+  // 如果两者都没有type，兼容
+  debugLog("check", "两者都没有type", {
+    result: "兼容",
+  });
+  return true;
+};
+
+// 计算容量是否足够
+const checkCapacity = (newChild: GridCellData): boolean => {
+  // 检查布局方向兼容性
+  if (props.direction === "horizontal" && newChild.w === -1) {
+    // 横向布局不允许宽度自适应的子项
+    debugLog("warn", "横向布局不允许宽度自适应的子项", {
+      newChild,
+      direction: props.direction,
+    });
+    return false;
+  }
+
+  if (props.direction === "vertical" && newChild.h === -1) {
+    // 纵向布局不允许高度自适应的子项
+    debugLog("warn", "纵向布局不允许高度自适应的子项", {
+      newChild,
+      direction: props.direction,
+    });
+    return false;
+  }
+
+  if (props.direction === "horizontal") {
+    // 横向布局：检查宽度容量
+    const currentUsedWidth = props.children.reduce((total, child) => {
+      // 如果子项宽度为-1，表示自适应，暂时按最小宽度1计算
+      const childWidth = child.w === -1 ? 1 : child.w;
+      return total + childWidth;
+    }, 0);
+
+    const newChildWidth = newChild.w === -1 ? 1 : newChild.w;
+    return currentUsedWidth + newChildWidth <= props.w;
+  } else {
+    // 纵向布局：检查高度容量
+    const currentUsedHeight = props.children.reduce((total, child) => {
+      // 如果子项高度为-1，表示自适应，暂时按最小高度1计算
+      const childHeight = child.h === -1 ? 1 : child.h;
+      return total + childHeight;
+    }, 0);
+
+    const newChildHeight = newChild.h === -1 ? 1 : newChild.h;
+    return currentUsedHeight + newChildHeight <= props.h;
+  }
+};
+
+// 拖拽开始
+const handleDragStart = (event: DragEvent, child: GridCellData, index: number) => {
+  if (!event.dataTransfer) return;
+
+  const dragStateData = {
+    draggedId: child.id,
+    draggedData: child,
+    sourceParentId: props.id,
+    targetParentId: null,
+    placeholderIndex: index,
+    showPlaceholder: false,
+    sourceType: props.type, // 添加源容器type信息到全局状态
+  };
+
+  dragState.value = dragStateData;
+
+  // 设置全局拖拽状态
+  setGlobalDragState(dragStateData);
+
+  // 设置拖拽数据
+  const dragData = {
+    childId: child.id,
+    childData: child,
+    sourceParentId: props.id,
+    sourceIndex: index,
+    sourceDirection: props.direction,
+    sourceType: props.type,
+  };
+
+  debugLog("start", "拖拽开始", {
+    sourceParentId: props.id,
+    sourceType: props.type,
+    childId: child.id,
+    dragData,
+  });
+
+  event.dataTransfer.setData("application/json", JSON.stringify(dragData));
+
+  event.dataTransfer.effectAllowed = "move";
+
+  // 设置拖拽样式
+  if (event.target instanceof HTMLElement) {
+    event.target.style.opacity = "0.5";
+  }
+};
+
+// 拖拽结束
+const handleDragEnd = (event: DragEvent) => {
+  // 重置样式
+  if (event.target instanceof HTMLElement) {
+    event.target.style.opacity = "1";
+  }
+
+  // 清除本地拖拽状态
+  dragState.value = {
+    draggedId: null,
+    draggedData: null,
+    sourceParentId: null,
+    targetParentId: null,
+    placeholderIndex: -1,
+    showPlaceholder: false,
+    sourceType: undefined,
+  };
+
+  // 清除全局拖拽状态
+  setGlobalDragState({
+    draggedId: null,
+    draggedData: null,
+    sourceParentId: null,
+    targetParentId: null,
+    placeholderIndex: -1,
+    showPlaceholder: false,
+    sourceType: undefined,
+  });
+
+  isDragOver.value = false;
+  isCapacityExceeded.value = false;
+
+  debugLog("info", "拖拽结束，清理所有状态", {
+    itemId: props.id,
+  });
+};
+
+// 拖拽进入
+const handleDragEnter = (event: DragEvent) => {
+  event.preventDefault();
+  isDragOver.value = true;
+
+  debugLog("state", "拖拽进入容器", {
+    itemId: props.id,
+    direction: props.direction,
+    align: props.align,
+  });
+};
+
+// 拖拽离开
+const handleDragLeave = (event: DragEvent) => {
+  // 只有当真正离开容器时才设置为false
+  if (!event.currentTarget || !event.relatedTarget) {
+    isDragOver.value = false;
+    isCapacityExceeded.value = false;
+    // 清理当前容器的占位符状态
+    if (dragState.value.targetParentId === props.id) {
+      dragState.value.showPlaceholder = false;
+      dragState.value.targetParentId = null;
+      dragState.value.placeholderIndex = -1;
+    }
+    return;
+  }
+
+  const currentTarget = event.currentTarget as HTMLElement;
+  const relatedTarget = event.relatedTarget as HTMLElement;
+
+  if (!currentTarget.contains(relatedTarget)) {
+    isDragOver.value = false;
+    isCapacityExceeded.value = false;
+    // 清理当前容器的占位符状态
+    if (dragState.value.targetParentId === props.id) {
+      dragState.value.showPlaceholder = false;
+      dragState.value.targetParentId = null;
+      dragState.value.placeholderIndex = -1;
+    }
+
+    debugLog("state", "拖拽离开容器", {
+      itemId: props.id,
+      clearPlaceholder: true,
+    });
+  }
+};
+
+// 拖拽悬停
+const handleDragOver = (event: DragEvent) => {
+  event.preventDefault();
+  if (!event.dataTransfer) return;
+
+  // 使用全局拖拽状态中的数据进行容量检测
+  let draggedData: GridCellData | null = null;
+  let isFromSameParent = false;
+
+  // 优先使用全局拖拽状态的数据
+  const globalState = getGlobalDragState();
+  if (globalState.draggedData) {
+    draggedData = globalState.draggedData;
+    isFromSameParent = globalState.sourceParentId === props.id;
+  } else {
+    // 备用方案：尝试从dataTransfer获取数据
+    try {
+      const dropData = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
+      draggedData = dropData.childData;
+      isFromSameParent = dropData.sourceParentId === props.id;
+    } catch (error) {
+      // 如果无法解析拖拽数据，允许拖拽（可能是外部元素）
+    }
+  }
+
+  // 计算应该插入的位置
+  const container = event.currentTarget as HTMLElement;
+  const children = Array.from(container.children).filter(
+    (el) => el.classList.contains("grid-child") && !el.classList.contains("drag-placeholder-visual")
+  );
+
+  let insertIndex = children.length;
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i] as HTMLElement;
+    const rect = child.getBoundingClientRect();
+
+    if (props.direction === "horizontal") {
+      // 横向布局：根据鼠标X坐标判断插入位置
+      if (event.clientX < rect.left + rect.width / 2) {
+        insertIndex = i;
+        break;
+      }
+    } else {
+      // 纵向布局：根据鼠标Y坐标判断插入位置
+      if (event.clientY < rect.top + rect.height / 2) {
+        insertIndex = i;
+        break;
+      }
+    }
+  }
+
+  // 获取源容器的type信息
+  let sourceType: string | undefined = undefined;
+
+  // 优先使用全局拖拽状态中的sourceType
+  const globalDragState = getGlobalDragState();
+  if (globalDragState.sourceType !== undefined) {
+    sourceType = globalDragState.sourceType;
+  } else {
+    // 备用方案：尝试从dataTransfer获取
+    try {
+      const dropData = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
+      sourceType = dropData.sourceType;
+    } catch (error) {
+      // 如果无法解析拖拽数据，继续执行
+    }
+  }
+
+  // 检查是否应该显示占位符
+  let shouldShowPlaceholder = false;
+
+  if (draggedData && !isFromSameParent) {
+    // 跨组拖拽：检查type兼容性和容量
+    const isTypeCompatible = checkTypeCompatibility(sourceType);
+    const hasCapacity = isTypeCompatible ? checkCapacity(draggedData) : false;
+
+    isCapacityExceeded.value = !hasCapacity || !isTypeCompatible;
+
+    const reason = !isTypeCompatible
+      ? "type不兼容"
+      : !hasCapacity
+      ? props.direction === "horizontal" && draggedData.w === -1
+        ? "横向布局不允许宽度自适应"
+        : props.direction === "vertical" && draggedData.h === -1
+        ? "纵向布局不允许高度自适应"
+        : "容量不足"
+      : "通过检测";
+
+    debugLog("check", "拖拽兼容性检测", {
+      targetId: props.id,
+      targetType: props.type,
+      sourceType,
+      targetDirection: props.direction,
+      draggedData,
+      isTypeCompatible,
+      hasCapacity,
+      isCapacityExceeded: isCapacityExceeded.value,
+      reason,
+    });
+
+    if (!isTypeCompatible || !hasCapacity) {
+      event.dataTransfer.dropEffect = "none";
+      shouldShowPlaceholder = false;
+    } else {
+      event.dataTransfer.dropEffect = "move";
+      shouldShowPlaceholder = true;
+    }
+  } else if (draggedData && isFromSameParent) {
+    // 同组拖拽：不显示占位符
+    isCapacityExceeded.value = false;
+    event.dataTransfer.dropEffect = "move";
+    shouldShowPlaceholder = false;
+  } else {
+    // 无拖拽数据：不显示占位符
+    isCapacityExceeded.value = false;
+    event.dataTransfer.dropEffect = "move";
+    shouldShowPlaceholder = false;
+  }
+
+  // 设置拖拽状态
+  dragState.value.targetParentId = props.id;
+  dragState.value.placeholderIndex = insertIndex;
+  dragState.value.showPlaceholder = shouldShowPlaceholder;
+
+  debugLog("state", "拖拽状态", {
+    targetParentId: dragState.value.targetParentId,
+    placeholderIndex: dragState.value.placeholderIndex,
+    showPlaceholder: dragState.value.showPlaceholder,
+    isFromSameParent,
+    itemId: props.id,
+  });
+};
+
+// 处理放置
+const handleDrop = (event: DragEvent) => {
+  event.preventDefault();
+  isDragOver.value = false;
+  isCapacityExceeded.value = false;
+
+  if (!event.dataTransfer) return;
+
+  try {
+    const dropData = JSON.parse(event.dataTransfer.getData("application/json"));
+    const { childId, childData, sourceParentId, sourceIndex, sourceType } = dropData;
+
+    // 如果是跨容器移动，检查type兼容性和容量
+    if (sourceParentId !== props.id) {
+      // 检查type兼容性
+      if (!checkTypeCompatibility(sourceType)) {
+        debugLog("warn", "type不兼容，无法放置到此容器", {
+          sourceType,
+          targetType: props.type,
+        });
+        return;
+      }
+
+      // 检查容量
+      if (!checkCapacity(childData)) {
+        debugLog("warn", "容量不足，无法放置到此容器");
+        return;
+      }
+    }
+
+    // 计算目标位置
+    const targetIndex = dragState.value.placeholderIndex;
+
+    if (sourceParentId === props.id) {
+      // 同一个容器内的重排序
+      if (sourceIndex !== targetIndex) {
+        emit("reorder-children", props.id, sourceIndex, targetIndex);
+      }
+    } else {
+      // 跨容器移动
+      emit(
+        "move-child",
+        { parentId: sourceParentId, childId, index: sourceIndex },
+        { parentId: props.id, index: targetIndex }
+      );
+    }
+  } catch (error) {
+    debugLog("error", "拖拽数据解析错误", error);
+  }
+
+  // 清除拖拽状态
+  dragState.value.showPlaceholder = false;
+  dragState.value.targetParentId = null;
+  dragState.value.placeholderIndex = -1;
+};
+</script>
+
+<style scoped>
+.grid-item {
+  box-sizing: border-box;
+  position: relative;
+}
+
+.grid-item.drag-over {
+  border-color: #ff6b6b;
+  background-color: rgba(255, 107, 107, 0.1);
+}
+
+.grid-item-content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  color: #007acc;
+  box-sizing: border-box;
+}
+
+.grid-item-children {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  box-sizing: border-box;
+  position: relative;
+  transition: background-color 0.2s ease;
+}
+
+/* 布局方向样式 */
+.grid-item-children.layout-horizontal {
+  flex-direction: row;
+  align-items: stretch;
+  flex-wrap: nowrap;
+}
+
+.grid-item-children.layout-vertical {
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
+}
+
+/* align 对齐方式样式 */
+/* 横向布局时的水平对齐（主轴对齐） */
+.grid-item-children.layout-horizontal.align-start {
+  justify-content: flex-start;
+}
+
+.grid-item-children.layout-horizontal.align-center {
+  justify-content: center;
+}
+
+.grid-item-children.layout-horizontal.align-end {
+  justify-content: flex-end;
+}
+
+.grid-item-children.layout-horizontal.align-stretch {
+  justify-content: space-between;
+}
+
+/* 纵向布局时的垂直对齐（主轴对齐） */
+.grid-item-children.layout-vertical.align-start {
+  justify-content: flex-start;
+}
+
+.grid-item-children.layout-vertical.align-center {
+  justify-content: center;
+}
+
+.grid-item-children.layout-vertical.align-end {
+  justify-content: flex-end;
+}
+
+.grid-item-children.layout-vertical.align-stretch {
+  justify-content: space-between;
+}
+
+.grid-item-children.drag-over {
+  background-color: rgba(255, 107, 107, 0.05);
+}
+
+.grid-item-children.capacity-exceeded {
+  background-color: rgba(255, 0, 0, 0.1);
+  border: 2px dashed #ff0000;
+  cursor: not-allowed;
+}
+
+.grid-child {
+  border: 1px solid #ccc;
+  border-radius: 2px;
+  background-color: rgba(255, 255, 255, 0.9);
+  padding: 4px;
+  box-sizing: border-box;
+  cursor: grab;
+  transition: all 0.2s ease;
+  user-select: none;
+  min-width: 0; /* 防止flex子项溢出 */
+  min-height: 0; /* 防止flex子项溢出 */
+}
+
+.grid-child:hover {
+  border-color: #007acc;
+  box-shadow: 0 2px 4px rgba(0, 122, 204, 0.2);
+}
+
+.grid-child:active {
+  cursor: grabbing;
+}
+
+.grid-child.dragging {
+  opacity: 0.5;
+  transform: rotate(2deg);
+  z-index: 1000;
+}
+
+.grid-child.drag-placeholder {
+  border: 2px dashed #ff6b6b;
+  background-color: rgba(255, 107, 107, 0.1);
+}
+
+.drag-placeholder-visual {
+  border: 2px dashed #ff6b6b;
+  background-color: rgba(255, 107, 107, 0.1);
+  border-radius: 2px;
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drag-placeholder-visual.placeholder-horizontal {
+  min-width: 60px;
+  width: auto;
+}
+
+.drag-placeholder-visual.placeholder-vertical {
+  min-height: 40px;
+  height: auto;
+}
+
+.default-child-content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  color: #666;
+  box-sizing: border-box;
+  pointer-events: none; /* 防止干扰拖拽 */
+}
+
+/* 拖拽动画 */
+@keyframes dragEnter {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.grid-item-children.drag-over {
+  animation: dragEnter 0.3s ease-in-out;
+}
+
+/* 横向布局时的特殊样式 */
+.layout-horizontal .grid-child {
+  margin-right: 2px;
+}
+
+.layout-horizontal .grid-child:last-child {
+  margin-right: 0;
+}
+
+/* 纵向布局时的特殊样式 */
+.layout-vertical .grid-child {
+  margin-bottom: 2px;
+}
+
+.layout-vertical .grid-child:last-child {
+  margin-bottom: 0;
+}
+</style>
