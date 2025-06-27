@@ -3,11 +3,12 @@ import path from "path";
 import { fileURLToPath } from "url";
 import packageJson from "./package.json";
 import vue from "@vitejs/plugin-vue";
+import dts from "vite-plugin-dts";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [dts({ entryRoot: "src", tsconfigPath: "./tsconfig.app.json" }), vue()],
   build: {
     lib: {
       entry: path.resolve(__dirname, "src/lib.ts"),
