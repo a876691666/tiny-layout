@@ -119,18 +119,41 @@ onMounted(() => {
   };
 });
 
+// Grid组件引用
+const gridRef = ref();
+
 // 处理子项移动事件
 const onChildMoved = (operation: any) => {
   console.log("子项移动事件:", operation);
 };
 
-// 调整网格大小 - 已移除 cellWidth 和 cellHeight 相关逻辑
-const adjustGridSize = (width: number, height: number) => {
-  // 这个函数现在不再需要设置 cellWidth 和 cellHeight
-  // 网格布局由 CSS Grid 自动处理
+// 处理子项点击事件
+const onChildClick = (child: any, parentId: string, index: number) => {
+  console.log("子项点击事件:", { child, parentId, index });
 };
 
-// 切换调试模式
+// 外部拖拽演示数据
+const externalItems = ref([
+  { id: "external-button-1", label: "外部按钮1", w: 1, h: 1 },
+  { id: "external-panel-1", label: "外部面板1", w: -1, h: 2 },
+  { id: "external-tool-1", label: "外部工具1", w: 1, h: 1 },
+]);
+
+// 开始外部拖拽
+const startExternalDrag = (item: any, type?: string) => {
+  if (gridRef.value) {
+    gridRef.value.startDrag(type, item);
+    console.log("开始外部拖拽:", { item, type });
+  }
+};
+
+// 结束外部拖拽
+const endExternalDrag = () => {
+  if (gridRef.value) {
+    gridRef.value.endDrag();
+    console.log("结束外部拖拽");
+  }
+};
 </script>
 
 <template>
@@ -153,11 +176,13 @@ const adjustGridSize = (width: number, height: number) => {
         }"
       >
         <Grid
+          ref="gridRef"
           v-model="GridLayouts"
           v-model:cell-items="gridCellItems"
           :config="gridConfig"
           :show-debug="showDebug"
           @child-moved="onChildMoved"
+          @child-click="onChildClick"
         >
           <!-- 自定义单元格内容 -->
           <template #cell="{ item, child }">
@@ -169,6 +194,53 @@ const adjustGridSize = (width: number, height: number) => {
         </Grid>
       </div>
 
+      <!-- 外部拖拽演示区域 -->
+      <div class="external-drag-demo">
+        <h3>外部拖拽演示</h3>
+        <div class="external-items">
+          <div
+            v-for="item in externalItems"
+            :key="item.id"
+            class="external-item"
+            @mousedown="startExternalDrag(item)"
+            @mouseup="endExternalDrag"
+          >
+            <div class="item-label">{{ item.label }}</div>
+            <div class="item-info">{{ item.w }}×{{ item.h }}</div>
+          </div>
+        </div>
+        
+        <div class="type-demo">
+          <h4>按类型拖拽演示</h4>
+          <div class="type-items">
+            <div
+              class="external-item type-panel"
+              @mousedown="startExternalDrag({ id: 'external-panel-type', label: '面板类型', w: -1, h: 2 }, 'panel')"
+              @mouseup="endExternalDrag"
+            >
+              <div class="item-label">面板类型</div>
+              <div class="item-info">type="panel"</div>
+            </div>
+            <div
+              class="external-item type-tools"
+              @mousedown="startExternalDrag({ id: 'external-tools-type', label: '工具类型', w: 1, h: 1 }, 'tools')"
+              @mouseup="endExternalDrag"
+            >
+              <div class="item-label">工具类型</div>
+              <div class="item-info">type="tools"</div>
+            </div>
+            <div
+              class="external-item type-none"
+              @mousedown="startExternalDrag({ id: 'external-none-type', label: '无类型', w: -1, h: 1 })"
+              @mouseup="endExternalDrag"
+            >
+              <div class="item-label">无类型</div>
+              <div class="item-info">无type</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 功能说明 -->
       <div class="instructions">
         <h3>功能说明：</h3>
@@ -178,6 +250,9 @@ const adjustGridSize = (width: number, height: number) => {
           <li>🔄 可以将子项拖拽到其他容器中</li>
           <li>👁️ 拖拽时会显示视觉反馈</li>
           <li>📊 开启调试信息可以看到详细日志</li>
+          <li>🆕 <strong>外部拖拽</strong>：按住左侧外部项目并移动鼠标到目标容器</li>
+          <li>🎯 外部拖拽会根据type限制显示占位符</li>
+          <li>🖱️ 在目标位置松开鼠标完成外部拖拽</li>
         </ul>
 
         <h3>布局说明：</h3>
@@ -322,13 +397,112 @@ const adjustGridSize = (width: number, height: number) => {
   line-height: 1.2;
 }
 
+/* 外部拖拽演示区域样式 */
+.external-drag-demo {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  max-width: 300px;
+  flex-shrink: 0;
+  margin-bottom: 20px;
+}
+
+.external-drag-demo h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #007acc;
+  font-size: 16px;
+  border-bottom: 2px solid #e1e8ed;
+  padding-bottom: 5px;
+}
+
+.external-drag-demo h4 {
+  margin-top: 20px;
+  margin-bottom: 10px;
+  color: #007acc;
+  font-size: 14px;
+}
+
+.external-items,
+.type-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.external-item {
+  padding: 8px 12px;
+  border: 2px solid #ddd;
+  border-radius: 4px;
+  background: #f9f9f9;
+  cursor: grab;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.external-item:hover {
+  border-color: #007acc;
+  background: #f0f8ff;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 122, 204, 0.2);
+}
+
+.external-item:active {
+  cursor: grabbing;
+  transform: translateY(0);
+}
+
+.external-item.type-panel {
+  border-color: #ff6b6b;
+  background: #fff5f5;
+}
+
+.external-item.type-panel:hover {
+  border-color: #ff4757;
+  background: #ffe6e6;
+}
+
+.external-item.type-tools {
+  border-color: #ffa502;
+  background: #fffbf0;
+}
+
+.external-item.type-tools:hover {
+  border-color: #ff9500;
+  background: #fff4e0;
+}
+
+.external-item.type-none {
+  border-color: #70a1ff;
+  background: #f1f4ff;
+}
+
+.external-item.type-none:hover {
+  border-color: #5352ed;
+  background: #e8ecff;
+}
+
+.item-label {
+  font-weight: bold;
+  font-size: 14px;
+  margin-bottom: 4px;
+  color: #333;
+}
+
+.item-info {
+  font-size: 11px;
+  color: #666;
+}
+
 /* 响应式设计 */
 @media (max-width: 1400px) {
   .main-content {
     flex-direction: column;
   }
 
-  .instructions {
+  .instructions,
+  .external-drag-demo {
     max-width: none;
   }
 }

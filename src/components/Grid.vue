@@ -18,6 +18,7 @@
         :debug="showDebug"
         @move-child="handleMoveChild"
         @reorder-children="handleReorderChildren"
+        @child-click="handleChildClick"
       >
         <!-- 传递cell slot给GridLayout -->
         <template #cell="{ item, child }">
@@ -45,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from "vue";
+import { ref, watch, computed, onMounted, onUnmounted } from "vue";
 import GridLayout from "./GridLayout.vue";
 import type { GridLayoutData, GridConfig, GridCellData } from "./type";
 
@@ -61,6 +62,7 @@ const props = withDefaults(defineProps<GridProps>(), {
 // 定义事件
 const emit = defineEmits<{
   "child-moved": [operation: { type: "move" | "reorder"; from: any; to: any; timestamp: number }];
+  "child-click": [child: GridCellData, parentId: string, index: number];
 }>();
 
 // 使用 defineModel 替换传统的 v-model 实现
@@ -69,6 +71,23 @@ const cellItems = defineModel<GridCellData[]>("cellItems", { default: () => [] }
 
 // 拖拽历史记录
 const dragHistory = ref<string[]>([]);
+
+// 外部拖拽状态
+const externalDragState = ref<{
+  isActive: boolean;
+  draggedItem: GridCellData | null;
+  sourceType?: string;
+  targetParentId: string | null;
+  targetIndex: number;
+  showPlaceholder: boolean;
+}>({
+  isActive: false,
+  draggedItem: null,
+  sourceType: undefined,
+  targetParentId: null,
+  targetIndex: -1,
+  showPlaceholder: false,
+});
 
 // 网格配置
 const rows = ref(0);
@@ -158,6 +177,11 @@ const handleMoveChild = (
   });
 
   console.log("跨容器移动完成:", operation);
+};
+
+// 处理子项点击事件
+const handleChildClick = (child: GridCellData, parentId: string, index: number) => {
+  emit("child-click", child, parentId, index);
 };
 
 // 处理同容器内重排序
@@ -281,6 +305,210 @@ const getGridConfig = () => {
     totalCellItems: cellItems.value.length,
   };
 };
+
+// 外部拖拽开始函数
+const startDrag = (type?: string, gridLayoutItem?: Partial<GridCellData>) => {
+  if (!gridLayoutItem) {
+    console.error("startDrag: gridLayoutItem 参数是必需的");
+    return;
+  }
+
+  // 创建默认的拖拽项数据
+  const defaultItem: GridCellData = {
+    parentId: "", // 外部拖拽时parentId为空
+    id: gridLayoutItem.id || `external-${Date.now()}`,
+    w: gridLayoutItem.w || 1,
+    h: gridLayoutItem.h || 1,
+    ...gridLayoutItem,
+  };
+
+  // 设置外部拖拽状态
+  externalDragState.value = {
+    isActive: true,
+    draggedItem: defaultItem,
+    sourceType: type,
+    targetParentId: null,
+    targetIndex: -1,
+    showPlaceholder: false,
+  };
+
+  // 设置全局拖拽状态，与GridLayout的拖拽逻辑保持一致
+  const globalState = getGlobalDragState();
+  Object.assign(globalState, {
+    draggedId: defaultItem.id,
+    draggedData: defaultItem,
+    sourceParentId: null, // 外部拖拽没有源容器
+    targetParentId: null,
+    placeholderIndex: -1,
+    showPlaceholder: false,
+    sourceType: type,
+  });
+
+  console.log("外部拖拽开始:", {
+    type,
+    item: defaultItem,
+  });
+};
+
+// 外部拖拽结束函数
+const endDrag = () => {
+  if (!externalDragState.value.isActive) {
+    return;
+  }
+
+  let operationCompleted = false;
+
+  // 如果有目标容器，执行添加操作
+  if (
+    externalDragState.value.targetParentId &&
+    externalDragState.value.draggedItem &&
+    externalDragState.value.showPlaceholder
+  ) {
+    const newItem = {
+      ...externalDragState.value.draggedItem,
+      parentId: externalDragState.value.targetParentId,
+    };
+
+    // 创建新的cellItems数组
+    const newCellItems = [...cellItems.value];
+
+    // 计算插入位置
+    let insertIndex = newCellItems.length;
+    let currentTargetIndex = 0;
+
+    for (let i = 0; i < newCellItems.length; i++) {
+      if (newCellItems[i].parentId === externalDragState.value.targetParentId) {
+        if (currentTargetIndex === externalDragState.value.targetIndex) {
+          insertIndex = i;
+          break;
+        }
+        currentTargetIndex++;
+      }
+    }
+
+    // 插入新项目
+    newCellItems.splice(insertIndex, 0, newItem);
+
+    // 更新数据
+    cellItems.value = newCellItems;
+
+    // 添加到历史记录
+    const operation = `外部拖拽添加 ${newItem.id} 到 ${externalDragState.value.targetParentId}[${externalDragState.value.targetIndex}]`;
+    dragHistory.value.unshift(operation);
+    if (dragHistory.value.length > 10) {
+      dragHistory.value.pop();
+    }
+
+    // 发出事件
+    emit("child-moved", {
+      type: "move",
+      from: { parentId: "", childId: newItem.id, index: -1 },
+      to: {
+        parentId: externalDragState.value.targetParentId,
+        index: externalDragState.value.targetIndex,
+      },
+      timestamp: Date.now(),
+    });
+
+    console.log("外部拖拽添加完成:", operation);
+    operationCompleted = true;
+  } else {
+    console.log("外部拖拽取消 - 没有有效的目标位置");
+  }
+
+  // 强制清理外部拖拽状态（无论是否成功添加）
+  externalDragState.value = {
+    isActive: false,
+    draggedItem: null,
+    sourceType: undefined,
+    targetParentId: null,
+    targetIndex: -1,
+    showPlaceholder: false,
+  };
+
+  // 强制清理全局拖拽状态
+  const globalState = getGlobalDragState();
+  Object.assign(globalState, {
+    draggedId: null,
+    draggedData: null,
+    sourceParentId: null,
+    targetParentId: null,
+    placeholderIndex: -1,
+    showPlaceholder: false,
+    sourceType: undefined,
+  });
+
+  console.log(`外部拖拽结束 - ${operationCompleted ? "操作完成" : "操作取消"}`);
+};
+
+// 获取全局拖拽状态的辅助函数
+const getGlobalDragState = () => {
+  if (!(window as any).__gridDragState) {
+    (window as any).__gridDragState = {
+      draggedId: null,
+      draggedData: null,
+      sourceParentId: null,
+      targetParentId: null,
+      placeholderIndex: -1,
+      showPlaceholder: false,
+      sourceType: undefined,
+    };
+  }
+  return (window as any).__gridDragState;
+};
+
+// 全局松手事件处理器
+const handleGlobalMouseUp = (event: MouseEvent) => {
+  if (externalDragState.value.isActive) {
+    console.log("全局松手，强制结束外部拖拽");
+
+    // 在结束拖拽之前，先通知所有GridLayout组件触发鼠标离开事件
+    const gridLayouts = document.querySelectorAll(".grid-item-children");
+    gridLayouts.forEach((layout) => {
+      // 创建并分发鼠标离开事件
+      const mouseLeaveEvent = new MouseEvent("mouseleave", {
+        bubbles: true,
+        cancelable: true,
+        relatedTarget: document.body,
+      });
+      layout.dispatchEvent(mouseLeaveEvent);
+    });
+
+    endDrag();
+  }
+};
+
+// 在组件挂载时设置全局引用和事件监听器
+onMounted(() => {
+  const gridContainer = document.querySelector(".grid-container");
+  if (gridContainer) {
+    (gridContainer as any).__gridComponent = {
+      startDrag,
+      endDrag,
+      externalDragState,
+    };
+  }
+
+  // 添加全局松手事件监听器
+  document.addEventListener("mouseup", handleGlobalMouseUp);
+});
+
+// 在组件卸载时清理全局引用和事件监听器
+onUnmounted(() => {
+  const gridContainer = document.querySelector(".grid-container");
+  if (gridContainer) {
+    delete (gridContainer as any).__gridComponent;
+  }
+
+  // 移除全局松手事件监听器
+  document.removeEventListener("mouseup", handleGlobalMouseUp);
+});
+
+// 暴露外部拖拽函数
+defineExpose({
+  startDrag,
+  endDrag,
+});
 </script>
 
 <style scoped>

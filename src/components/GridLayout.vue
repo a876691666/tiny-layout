@@ -17,6 +17,10 @@
       @drop="handleDrop"
       @dragenter="handleDragEnter"
       @dragleave="handleDragLeave"
+      @mouseenter="handleExternalMouseEnter"
+      @mouseleave="handleExternalMouseLeave"
+      @mousemove="handleExternalMouseMove"
+      @mouseup="handleExternalMouseUp"
     >
       <div
         v-for="(child, index) in children"
@@ -30,6 +34,7 @@
         draggable="true"
         @dragstart="handleDragStart($event, child, index)"
         @dragend="handleDragEnd"
+        @click="handleChildClick($event, child, index)"
       >
         <slot
           name="cell"
@@ -94,6 +99,7 @@ const emit = defineEmits<{
     to: { parentId: string; index: number }
   ];
   "reorder-children": [parentId: string, fromIndex: number, toIndex: number];
+  "child-click": [child: GridCellData, parentId: string, index: number];
 }>();
 
 // 调试工具
@@ -127,26 +133,14 @@ const debugLog = (level: DebugLevel, message: string, data?: any) => {
   console.groupEnd();
 };
 
-// 全局拖拽状态（在window对象上）
-const getGlobalDragState = (): DragState => {
-  if (!(window as any).__gridDragState) {
-    (window as any).__gridDragState = {
-      draggedId: null,
-      draggedData: null,
-      sourceParentId: null,
-      targetParentId: null,
-      placeholderIndex: -1,
-      showPlaceholder: false,
-      sourceType: undefined,
-    };
-  }
-  return (window as any).__gridDragState;
-};
+// 拖拽悬停状态
+const isDragOver = ref(false);
 
-const setGlobalDragState = (state: Partial<DragState>) => {
-  const globalState = getGlobalDragState();
-  Object.assign(globalState, state);
-};
+// 容量检测状态
+const isCapacityExceeded = ref(false);
+
+// 外部拖拽监听器
+const isExternalDragActive = ref(false);
 
 // 本地拖拽状态
 const dragState = ref<DragState>({
@@ -158,12 +152,6 @@ const dragState = ref<DragState>({
   showPlaceholder: false,
   sourceType: undefined,
 });
-
-// 拖拽悬停状态
-const isDragOver = ref(false);
-
-// 容量检测状态
-const isCapacityExceeded = ref(false);
 
 const itemStyle = ref({
   gridColumnStart: 1,
@@ -328,6 +316,22 @@ const checkCapacity = (newChild: GridCellData): boolean => {
     const newChildHeight = newChild.h === -1 ? 1 : newChild.h;
     return currentUsedHeight + newChildHeight <= props.h;
   }
+};
+
+// 处理子项单击事件
+const handleChildClick = (event: MouseEvent, child: GridCellData, index: number) => {
+  // 阻止事件冒泡，避免触发父容器的点击事件
+  event.stopPropagation();
+  
+  debugLog("info", "子项被点击", {
+    childId: child.id,
+    parentId: props.id,
+    index,
+    child,
+  });
+
+  // 触发子项点击事件，向上传递
+  emit("child-click", child, props.id, index);
 };
 
 // 拖拽开始
@@ -649,6 +653,225 @@ const handleDrop = (event: DragEvent) => {
   dragState.value.targetParentId = null;
   dragState.value.placeholderIndex = -1;
 };
+
+// 获取全局拖拽状态（包括外部拖拽）
+const getGlobalDragState = (): DragState => {
+  if (!(window as any).__gridDragState) {
+    (window as any).__gridDragState = {
+      draggedId: null,
+      draggedData: null,
+      sourceParentId: null,
+      targetParentId: null,
+      placeholderIndex: -1,
+      showPlaceholder: false,
+      sourceType: undefined,
+    };
+  }
+  return (window as any).__gridDragState;
+};
+
+const setGlobalDragState = (state: Partial<DragState>) => {
+  const globalState = getGlobalDragState();
+  Object.assign(globalState, state);
+};
+
+// 外部拖拽鼠标进入处理
+const handleExternalMouseEnter = (event: MouseEvent) => {
+  const globalState = getGlobalDragState();
+  
+  // 只有在外部拖拽激活时才处理
+  if (!globalState.draggedData || globalState.sourceParentId !== null) {
+    return;
+  }
+
+  isDragOver.value = true;
+  isExternalDragActive.value = true;
+
+  debugLog("state", "外部拖拽进入容器", {
+    itemId: props.id,
+    direction: props.direction,
+    align: props.align,
+  });
+};
+
+// 外部拖拽鼠标离开处理
+const handleExternalMouseLeave = (event: MouseEvent) => {
+  if (!isExternalDragActive.value) return;
+
+  const currentTarget = event.currentTarget as HTMLElement;
+  const relatedTarget = event.relatedTarget as HTMLElement;
+
+  if (!currentTarget?.contains?.(relatedTarget)) {
+    isDragOver.value = false;
+    isCapacityExceeded.value = false;
+    isExternalDragActive.value = false;
+
+    // 清理当前容器的占位符状态
+    if (dragState.value.targetParentId === props.id) {
+      dragState.value.showPlaceholder = false;
+      dragState.value.targetParentId = null;
+      dragState.value.placeholderIndex = -1;
+    }
+
+    debugLog("state", "外部拖拽离开容器", {
+      itemId: props.id,
+      clearPlaceholder: true,
+    });
+  }
+};
+
+// 外部拖拽鼠标移动处理
+const handleExternalMouseMove = (event: MouseEvent) => {
+  const globalState = getGlobalDragState();
+  
+  // 只有在外部拖拽激活时才处理
+  if (!globalState.draggedData || globalState.sourceParentId !== null || !isExternalDragActive.value) {
+    return;
+  }
+
+  const draggedData = globalState.draggedData;
+  const sourceType = globalState.sourceType;
+
+  // 计算应该插入的位置
+  const container = event.currentTarget as HTMLElement;
+  const children = Array.from(container.children).filter(
+    (el) => el.classList.contains("grid-child") && !el.classList.contains("drag-placeholder-visual")
+  );
+
+  let insertIndex = children.length;
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i] as HTMLElement;
+    const rect = child.getBoundingClientRect();
+
+    if (props.direction === "horizontal") {
+      // 横向布局：根据鼠标X坐标判断插入位置
+      if (event.clientX < rect.left + rect.width / 2) {
+        insertIndex = i;
+        break;
+      }
+    } else {
+      // 纵向布局：根据鼠标Y坐标判断插入位置
+      if (event.clientY < rect.top + rect.height / 2) {
+        insertIndex = i;
+        break;
+      }
+    }
+  }
+
+  // 检查type兼容性和容量
+  const isTypeCompatible = checkTypeCompatibility(sourceType);
+  const hasCapacity = isTypeCompatible ? checkCapacity(draggedData) : false;
+
+  isCapacityExceeded.value = !hasCapacity || !isTypeCompatible;
+
+  const shouldShowPlaceholder = isTypeCompatible && hasCapacity;
+
+  // 设置拖拽状态
+  dragState.value.targetParentId = props.id;
+  dragState.value.placeholderIndex = insertIndex;
+  dragState.value.showPlaceholder = shouldShowPlaceholder;
+
+  debugLog("state", "外部拖拽状态更新", {
+    targetParentId: dragState.value.targetParentId,
+    placeholderIndex: dragState.value.placeholderIndex,
+    showPlaceholder: dragState.value.showPlaceholder,
+    isTypeCompatible,
+    hasCapacity,
+    itemId: props.id,
+  });
+};
+
+// 外部拖拽松手处理（模拟drop）
+const handleExternalMouseUp = (event: MouseEvent) => {
+  const globalState = getGlobalDragState();
+  
+  // 只有在外部拖拽激活且显示占位符时才处理
+  if (!globalState.draggedData || 
+      globalState.sourceParentId !== null || 
+      !isExternalDragActive.value || 
+      !dragState.value.showPlaceholder) {
+    
+    // 即使不满足拖拽条件，也要触发鼠标离开事件清理悬停状态
+    if (isExternalDragActive.value) {
+      forceMouseLeave();
+    }
+    return;
+  }
+
+  // 触发Grid组件的endDrag函数
+  const gridContainer = document.querySelector('.grid-container');
+  if (gridContainer && (gridContainer as any).__gridComponent) {
+    const gridComponent = (gridContainer as any).__gridComponent;
+    if (gridComponent.endDrag) {
+      // 更新外部拖拽状态中的目标信息
+      const externalDragState = gridComponent.externalDragState;
+      if (externalDragState) {
+        externalDragState.value.targetParentId = props.id;
+        externalDragState.value.targetIndex = dragState.value.placeholderIndex;
+        externalDragState.value.showPlaceholder = true;
+      }
+      
+      gridComponent.endDrag();
+    }
+  }
+
+  // 触发鼠标离开事件，然后清理本地状态
+  forceMouseLeave();
+  cleanupLocalDragState();
+
+  debugLog("info", "外部拖拽完成", {
+    itemId: props.id,
+  });
+};
+
+// 清理本地拖拽状态的辅助函数
+const cleanupLocalDragState = () => {
+  isDragOver.value = false;
+  isCapacityExceeded.value = false;
+  isExternalDragActive.value = false;
+  dragState.value.showPlaceholder = false;
+  dragState.value.targetParentId = null;
+  dragState.value.placeholderIndex = -1;
+};
+
+// 强制触发鼠标离开事件（用于松手时清理状态）
+const forceMouseLeave = () => {
+  if (isExternalDragActive.value) {
+    debugLog("info", "强制触发鼠标离开事件", {
+      itemId: props.id,
+    });
+    
+    // 模拟鼠标离开事件
+    const mockEvent = new MouseEvent('mouseleave', {
+      bubbles: true,
+      cancelable: true,
+      relatedTarget: document.body // 设置relatedTarget为body，确保离开逻辑生效
+    });
+    
+    handleExternalMouseLeave(mockEvent);
+  }
+};
+
+// 监听全局拖拽状态变化，当外部拖拽结束时清理本地状态
+watch(
+  () => {
+    const globalState = getGlobalDragState();
+    return globalState.draggedData;
+  },
+  (newValue, oldValue) => {
+    // 当全局拖拽数据从有值变为null时，说明拖拽结束了
+    if (oldValue && !newValue && isExternalDragActive.value) {
+      debugLog("info", "检测到全局拖拽结束，强制触发鼠标离开", {
+        itemId: props.id,
+      });
+      
+      // 先触发鼠标离开事件，再清理本地状态
+      forceMouseLeave();
+      cleanupLocalDragState();
+    }
+  }
+);
 </script>
 
 <style scoped>
