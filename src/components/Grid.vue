@@ -53,16 +53,24 @@ import type { GridLayoutData, GridConfig, GridCellData } from "./type";
 interface GridProps {
   config: GridConfig;
   showDebug?: boolean;
+  /**
+   * 控制外部拖拽行为
+   * - true: 直接插入到v-model数据中，触发child-moved事件
+   * - false: 不插入数据，只触发 drag-add 事件，由父组件自行处理
+   */
+  insertExternalDrag?: boolean;
 }
 
 const props = withDefaults(defineProps<GridProps>(), {
   showDebug: false,
+  insertExternalDrag: true,
 });
 
 // 定义事件
 const emit = defineEmits<{
   "child-moved": [operation: { type: "move" | "reorder"; from: any; to: any; timestamp: number }];
   "child-click": [child: GridCellData, parentId: string, index: number];
+  "drag-add": [data: { item: GridCellData; parentId: string; index: number; timestamp: number }];
 }>();
 
 // 使用 defineModel 替换传统的 v-model 实现
@@ -411,69 +419,89 @@ const endDrag = () => {
       parentId: externalDragState.value.targetParentId,
     };
 
-    // 创建新的cellItems数组
-    const newCellItems = [...cellItems.value];
+    if (props.insertExternalDrag) {
+      // 直接插入到v-model数据中
+      // 创建新的cellItems数组
+      const newCellItems = [...cellItems.value];
 
-    // 计算插入位置
-    let insertIndex = newCellItems.length;
-    let currentTargetIndex = 0;
+      // 计算插入位置
+      let insertIndex = newCellItems.length;
+      let currentTargetIndex = 0;
 
-    for (let i = 0; i < newCellItems.length; i++) {
-      if (newCellItems[i].parentId === externalDragState.value.targetParentId) {
-        if (currentTargetIndex === externalDragState.value.targetIndex) {
-          insertIndex = i;
-          break;
+      for (let i = 0; i < newCellItems.length; i++) {
+        if (newCellItems[i].parentId === externalDragState.value.targetParentId) {
+          if (currentTargetIndex === externalDragState.value.targetIndex) {
+            insertIndex = i;
+            break;
+          }
+          currentTargetIndex++;
         }
-        currentTargetIndex++;
       }
-    }
 
-    // 插入新项目
-    newCellItems.splice(insertIndex, 0, newItem);
+      // 插入新项目
+      newCellItems.splice(insertIndex, 0, newItem);
 
-    // 更新数据
-    cellItems.value = newCellItems;
+      // 更新数据
+      cellItems.value = newCellItems;
 
-    // 检查目标容器是否需要更新sort值
-    const targetContainerItems = newCellItems.filter(item => item.parentId === externalDragState.value.targetParentId);
-    const needsSortUpdate = targetContainerItems.length > 1 && !targetContainerItems.some(child => child.sort !== undefined);
-    
-    if (needsSortUpdate) {
-      // 为目标容器的所有子项设置sort值
-      const updatedCellItems = [...newCellItems];
-      targetContainerItems.forEach((child, index) => {
-        const globalIndex = updatedCellItems.findIndex(item => item.id === child.id);
-        if (globalIndex !== -1) {
-          updatedCellItems[globalIndex] = { ...child, sort: index };
-        }
-      });
-      cellItems.value = updatedCellItems;
+      // 检查目标容器是否需要更新sort值
+      const targetContainerItems = newCellItems.filter(item => item.parentId === externalDragState.value.targetParentId);
+      const needsSortUpdate = targetContainerItems.length > 1 && !targetContainerItems.some(child => child.sort !== undefined);
       
-      console.log("外部拖拽后更新目标容器sort值", {
-        targetParentId: externalDragState.value.targetParentId,
-        children: targetContainerItems.map(child => ({ id: child.id, sort: child.sort })),
+      if (needsSortUpdate) {
+        // 为目标容器的所有子项设置sort值
+        const updatedCellItems = [...newCellItems];
+        targetContainerItems.forEach((child, index) => {
+          const globalIndex = updatedCellItems.findIndex(item => item.id === child.id);
+          if (globalIndex !== -1) {
+            updatedCellItems[globalIndex] = { ...child, sort: index };
+          }
+        });
+        cellItems.value = updatedCellItems;
+        
+        console.log("外部拖拽后更新目标容器sort值", {
+          targetParentId: externalDragState.value.targetParentId,
+          children: targetContainerItems.map(child => ({ id: child.id, sort: child.sort })),
+        });
+      }
+
+      // 添加到历史记录
+      const operation = `外部拖拽添加 ${newItem.id} 到 ${externalDragState.value.targetParentId}[${externalDragState.value.targetIndex}]${needsSortUpdate ? ' (更新sort)' : ''}`;
+      dragHistory.value.unshift(operation);
+      if (dragHistory.value.length > 10) {
+        dragHistory.value.pop();
+      }
+
+      // 发出child-moved事件
+      emit("child-moved", {
+        type: "move",
+        from: { parentId: "", childId: newItem.id, index: -1 },
+        to: {
+          parentId: externalDragState.value.targetParentId,
+          index: externalDragState.value.targetIndex,
+        },
+        timestamp: Date.now(),
       });
-    }
 
-    // 添加到历史记录
-    const operation = `外部拖拽添加 ${newItem.id} 到 ${externalDragState.value.targetParentId}[${externalDragState.value.targetIndex}]${needsSortUpdate ? ' (更新sort)' : ''}`;
-    dragHistory.value.unshift(operation);
-    if (dragHistory.value.length > 10) {
-      dragHistory.value.pop();
-    }
-
-    // 发出事件
-    emit("child-moved", {
-      type: "move",
-      from: { parentId: "", childId: newItem.id, index: -1 },
-      to: {
+      console.log("外部拖拽添加完成:", operation);
+    } else {
+      emit("drag-add", {
+        item: newItem,
         parentId: externalDragState.value.targetParentId,
         index: externalDragState.value.targetIndex,
-      },
-      timestamp: Date.now(),
-    });
+        timestamp: Date.now(),
+      });
 
-    console.log("外部拖拽添加完成:", operation);
+      // 添加到历史记录
+      const operation = `外部拖拽事件 ${newItem.id} 到 ${externalDragState.value.targetParentId}[${externalDragState.value.targetIndex}] (仅触发事件)`;
+      dragHistory.value.unshift(operation);
+      if (dragHistory.value.length > 10) {
+        dragHistory.value.pop();
+      }
+
+      console.log("外部拖拽事件触发:", operation);
+    }
+
     operationCompleted = true;
   } else {
     console.log("外部拖拽取消 - 没有有效的目标位置");
