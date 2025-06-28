@@ -607,10 +607,10 @@ const handleDragOver = (event: DragEvent) => {
       shouldShowPlaceholder = true;
     }
   } else if (draggedData && isFromSameParent) {
-    // 同组拖拽：显示占位符用于重排序
+    // 同组拖拽：不显示占位符，仅用于重排序
     isCapacityExceeded.value = false;
     event.dataTransfer.dropEffect = "move";
-    shouldShowPlaceholder = true;
+    shouldShowPlaceholder = false;
   } else {
     // 无拖拽数据：不显示占位符
     isCapacityExceeded.value = false;
@@ -629,6 +629,7 @@ const handleDragOver = (event: DragEvent) => {
     showPlaceholder: dragState.value.showPlaceholder,
     isFromSameParent,
     insertPosition: isFromSameParent ? "任意位置" : "最后位置",
+    placeholderType: isFromSameParent ? "同组拖拽(无占位符)" : "跨组拖拽(有占位符)",
     itemId: props.id,
   });
 };
