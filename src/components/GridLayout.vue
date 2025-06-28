@@ -13,6 +13,9 @@
         'align-end': align === 'end',
         'align-stretch': align === 'stretch',
       }"
+      :style="{
+        gap: gap + 'px',
+      }"
       @dragover="handleDragOver"
       @drop="handleDrop"
       @dragenter="handleDragEnter"
@@ -23,7 +26,7 @@
       @mouseup="handleExternalMouseUp"
     >
       <div
-        v-for="(child, index) in children"
+        v-for="(child, index) in sortedChildren"
         :key="child.id"
         class="grid-child"
         :class="{
@@ -49,7 +52,7 @@
 
       <!-- 拖拽占位符 -->
       <div
-        v-if="dragState.showPlaceholder && dragState.targetParentId === id && isDragOver"
+        v-if="dragState.showPlaceholder && dragState.targetParentId === id"
         class="drag-placeholder-visual"
         :class="{
           'placeholder-horizontal': direction === 'horizontal',
@@ -92,13 +95,38 @@ const props = withDefaults(defineProps<ExtendedGridLayoutDataWithDebug>(), {
   debug: false,
 });
 
+// 计算排序后的子项
+const sortedChildren = computed(() => {
+  const childrenArray = [...props.children];
+
+  // 检查是否有任何子项有sort字段
+  const hasSortField = childrenArray.some((child) => child.sort !== undefined);
+
+  if (hasSortField) {
+    // 如果有sort字段，按sort排序，没有sort的项目放在最后
+    return childrenArray.sort((a, b) => {
+      const sortA = a.sort ?? Number.MAX_SAFE_INTEGER;
+      const sortB = b.sort ?? Number.MAX_SAFE_INTEGER;
+      return sortA - sortB;
+    });
+  } else {
+    // 如果没有sort字段，保持原始数组顺序
+    return childrenArray;
+  }
+});
+
 // 定义事件
 const emit = defineEmits<{
   "move-child": [
     from: { parentId: string; childId: string; index: number },
     to: { parentId: string; index: number }
   ];
-  "reorder-children": [parentId: string, fromIndex: number, toIndex: number];
+  "reorder-children": [
+    parentId: string,
+    fromIndex: number,
+    toIndex: number,
+    shouldUpdateSort?: boolean
+  ];
   "child-click": [child: GridCellData, parentId: string, index: number];
 }>();
 
@@ -322,7 +350,7 @@ const checkCapacity = (newChild: GridCellData): boolean => {
 const handleChildClick = (event: MouseEvent, child: GridCellData, index: number) => {
   // 阻止事件冒泡，避免触发父容器的点击事件
   event.stopPropagation();
-  
+
   debugLog("info", "子项被点击", {
     childId: child.id,
     parentId: props.id,
@@ -497,23 +525,29 @@ const handleDragOver = (event: DragEvent) => {
 
   let insertIndex = children.length;
 
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i] as HTMLElement;
-    const rect = child.getBoundingClientRect();
+  // 如果是同一个父容器内的拖拽，允许任意位置插入
+  if (isFromSameParent) {
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i] as HTMLElement;
+      const rect = child.getBoundingClientRect();
 
-    if (props.direction === "horizontal") {
-      // 横向布局：根据鼠标X坐标判断插入位置
-      if (event.clientX < rect.left + rect.width / 2) {
-        insertIndex = i;
-        break;
-      }
-    } else {
-      // 纵向布局：根据鼠标Y坐标判断插入位置
-      if (event.clientY < rect.top + rect.height / 2) {
-        insertIndex = i;
-        break;
+      if (props.direction === "horizontal") {
+        // 横向布局：根据鼠标X坐标判断插入位置
+        if (event.clientX < rect.left + rect.width / 2) {
+          insertIndex = i;
+          break;
+        }
+      } else {
+        // 纵向布局：根据鼠标Y坐标判断插入位置
+        if (event.clientY < rect.top + rect.height / 2) {
+          insertIndex = i;
+          break;
+        }
       }
     }
+  } else {
+    // 如果是跨容器拖拽，只能插入到最后位置
+    insertIndex = children.length;
   }
 
   // 获取源容器的type信息
@@ -573,10 +607,10 @@ const handleDragOver = (event: DragEvent) => {
       shouldShowPlaceholder = true;
     }
   } else if (draggedData && isFromSameParent) {
-    // 同组拖拽：不显示占位符
+    // 同组拖拽：显示占位符用于重排序
     isCapacityExceeded.value = false;
     event.dataTransfer.dropEffect = "move";
-    shouldShowPlaceholder = false;
+    shouldShowPlaceholder = true;
   } else {
     // 无拖拽数据：不显示占位符
     isCapacityExceeded.value = false;
@@ -594,6 +628,7 @@ const handleDragOver = (event: DragEvent) => {
     placeholderIndex: dragState.value.placeholderIndex,
     showPlaceholder: dragState.value.showPlaceholder,
     isFromSameParent,
+    insertPosition: isFromSameParent ? "任意位置" : "最后位置",
     itemId: props.id,
   });
 };
@@ -628,16 +663,33 @@ const handleDrop = (event: DragEvent) => {
       }
     }
 
-    // 计算目标位置
-    const targetIndex = dragState.value.placeholderIndex;
-
     if (sourceParentId === props.id) {
       // 同一个容器内的重排序
-      if (sourceIndex !== targetIndex) {
-        emit("reorder-children", props.id, sourceIndex, targetIndex);
+      const targetIndex = dragState.value.placeholderIndex;
+
+      // 需要将排序后的索引转换为原始数组的索引
+      const originalFromIndex = props.children.findIndex((child) => child.id === childId);
+
+      // 计算目标位置在原始数组中的索引
+      let originalToIndex = targetIndex;
+      if (targetIndex < sortedChildren.value.length) {
+        const targetChild = sortedChildren.value[targetIndex];
+        originalToIndex = props.children.findIndex((child) => child.id === targetChild.id);
+      } else {
+        originalToIndex = props.children.length;
+      }
+
+      if (originalFromIndex !== originalToIndex && originalFromIndex !== -1) {
+        // 检查是否需要更新sort值（如果当前没有sort或者拖拽会改变顺序）
+        const shouldUpdateSort =
+          !props.children.some((child) => child.sort !== undefined) ||
+          targetIndex !== sortedChildren.value.findIndex((child) => child.id === childId);
+
+        emit("reorder-children", props.id, originalFromIndex, originalToIndex, shouldUpdateSort);
       }
     } else {
-      // 跨容器移动
+      // 跨容器移动，固定插入到最后位置
+      const targetIndex = props.children.length;
       emit(
         "move-child",
         { parentId: sourceParentId, childId, index: sourceIndex },
@@ -678,7 +730,7 @@ const setGlobalDragState = (state: Partial<DragState>) => {
 // 外部拖拽鼠标进入处理
 const handleExternalMouseEnter = (event: MouseEvent) => {
   const globalState = getGlobalDragState();
-  
+
   // 只有在外部拖拽激活时才处理
   if (!globalState.draggedData || globalState.sourceParentId !== null) {
     return;
@@ -723,9 +775,13 @@ const handleExternalMouseLeave = (event: MouseEvent) => {
 // 外部拖拽鼠标移动处理
 const handleExternalMouseMove = (event: MouseEvent) => {
   const globalState = getGlobalDragState();
-  
+
   // 只有在外部拖拽激活时才处理
-  if (!globalState.draggedData || globalState.sourceParentId !== null || !isExternalDragActive.value) {
+  if (
+    !globalState.draggedData ||
+    globalState.sourceParentId !== null ||
+    !isExternalDragActive.value
+  ) {
     return;
   }
 
@@ -738,26 +794,8 @@ const handleExternalMouseMove = (event: MouseEvent) => {
     (el) => el.classList.contains("grid-child") && !el.classList.contains("drag-placeholder-visual")
   );
 
+  // 外部拖拽只能插入到最后位置
   let insertIndex = children.length;
-
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i] as HTMLElement;
-    const rect = child.getBoundingClientRect();
-
-    if (props.direction === "horizontal") {
-      // 横向布局：根据鼠标X坐标判断插入位置
-      if (event.clientX < rect.left + rect.width / 2) {
-        insertIndex = i;
-        break;
-      }
-    } else {
-      // 纵向布局：根据鼠标Y坐标判断插入位置
-      if (event.clientY < rect.top + rect.height / 2) {
-        insertIndex = i;
-        break;
-      }
-    }
-  }
 
   // 检查type兼容性和容量
   const isTypeCompatible = checkTypeCompatibility(sourceType);
@@ -778,6 +816,7 @@ const handleExternalMouseMove = (event: MouseEvent) => {
     showPlaceholder: dragState.value.showPlaceholder,
     isTypeCompatible,
     hasCapacity,
+    insertPosition: "最后位置",
     itemId: props.id,
   });
 };
@@ -785,13 +824,14 @@ const handleExternalMouseMove = (event: MouseEvent) => {
 // 外部拖拽松手处理（模拟drop）
 const handleExternalMouseUp = (event: MouseEvent) => {
   const globalState = getGlobalDragState();
-  
+
   // 只有在外部拖拽激活且显示占位符时才处理
-  if (!globalState.draggedData || 
-      globalState.sourceParentId !== null || 
-      !isExternalDragActive.value || 
-      !dragState.value.showPlaceholder) {
-    
+  if (
+    !globalState.draggedData ||
+    globalState.sourceParentId !== null ||
+    !isExternalDragActive.value ||
+    !dragState.value.showPlaceholder
+  ) {
     // 即使不满足拖拽条件，也要触发鼠标离开事件清理悬停状态
     if (isExternalDragActive.value) {
       forceMouseLeave();
@@ -800,7 +840,7 @@ const handleExternalMouseUp = (event: MouseEvent) => {
   }
 
   // 触发Grid组件的endDrag函数
-  const gridContainer = document.querySelector('.grid-container');
+  const gridContainer = document.querySelector(".grid-container");
   if (gridContainer && (gridContainer as any).__gridComponent) {
     const gridComponent = (gridContainer as any).__gridComponent;
     if (gridComponent.endDrag) {
@@ -811,7 +851,7 @@ const handleExternalMouseUp = (event: MouseEvent) => {
         externalDragState.value.targetIndex = dragState.value.placeholderIndex;
         externalDragState.value.showPlaceholder = true;
       }
-      
+
       gridComponent.endDrag();
     }
   }
@@ -841,14 +881,14 @@ const forceMouseLeave = () => {
     debugLog("info", "强制触发鼠标离开事件", {
       itemId: props.id,
     });
-    
+
     // 模拟鼠标离开事件
-    const mockEvent = new MouseEvent('mouseleave', {
+    const mockEvent = new MouseEvent("mouseleave", {
       bubbles: true,
       cancelable: true,
-      relatedTarget: document.body // 设置relatedTarget为body，确保离开逻辑生效
+      relatedTarget: document.body, // 设置relatedTarget为body，确保离开逻辑生效
     });
-    
+
     handleExternalMouseLeave(mockEvent);
   }
 };
@@ -865,7 +905,7 @@ watch(
       debugLog("info", "检测到全局拖拽结束，强制触发鼠标离开", {
         itemId: props.id,
       });
-      
+
       // 先触发鼠标离开事件，再清理本地状态
       forceMouseLeave();
       cleanupLocalDragState();
@@ -964,10 +1004,6 @@ watch(
 }
 
 .grid-child {
-  border: 1px solid #ccc;
-  border-radius: 2px;
-  background-color: rgba(255, 255, 255, 0.9);
-  padding: 4px;
   box-sizing: border-box;
   cursor: grab;
   transition: all 0.2s ease;
@@ -1045,23 +1081,5 @@ watch(
 
 .grid-item-children.drag-over {
   animation: dragEnter 0.3s ease-in-out;
-}
-
-/* 横向布局时的特殊样式 */
-.layout-horizontal .grid-child {
-  margin-right: 2px;
-}
-
-.layout-horizontal .grid-child:last-child {
-  margin-right: 0;
-}
-
-/* 纵向布局时的特殊样式 */
-.layout-vertical .grid-child {
-  margin-bottom: 2px;
-}
-
-.layout-vertical .grid-child:last-child {
-  margin-bottom: 0;
 }
 </style>

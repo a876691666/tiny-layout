@@ -161,8 +161,29 @@ const handleMoveChild = (
   // 更新数据
   cellItems.value = newCellItems;
 
+  // 检查目标容器是否需要更新sort值
+  const targetContainerChildren = newCellItems.filter(item => item.parentId === to.parentId);
+  const needsSort = targetContainerChildren.length > 1 && !targetContainerChildren.some(child => child.sort !== undefined);
+  
+  if (needsSort) {
+    // 为目标容器的所有子项设置sort值
+    const updatedCellItems = [...newCellItems];
+    targetContainerChildren.forEach((child, index) => {
+      const globalIndex = updatedCellItems.findIndex(item => item.id === child.id);
+      if (globalIndex !== -1) {
+        updatedCellItems[globalIndex] = { ...child, sort: index };
+      }
+    });
+    cellItems.value = updatedCellItems;
+    
+    console.log("跨容器移动后更新目标容器sort值", {
+      targetParentId: to.parentId,
+      children: targetContainerChildren.map(child => ({ id: child.id, sort: child.sort })),
+    });
+  }
+
   // 添加到历史记录
-  const operation = `移动 ${from.childId} 从 ${from.parentId}[${from.index}] 到 ${to.parentId}[${to.index}]`;
+  const operation = `移动 ${from.childId} 从 ${from.parentId}[${from.index}] 到 ${to.parentId}[${to.index}]${needsSort ? ' (更新sort)' : ''}`;
   dragHistory.value.unshift(operation);
   if (dragHistory.value.length > 10) {
     dragHistory.value.pop();
@@ -185,7 +206,7 @@ const handleChildClick = (child: GridCellData, parentId: string, index: number) 
 };
 
 // 处理同容器内重排序
-const handleReorderChildren = (parentId: string, fromIndex: number, toIndex: number) => {
+const handleReorderChildren = (parentId: string, fromIndex: number, toIndex: number, shouldUpdateSort?: boolean) => {
   const parentChildren = getChildrenForItem(parentId);
 
   if (
@@ -249,8 +270,29 @@ const handleReorderChildren = (parentId: string, fromIndex: number, toIndex: num
   // 更新数据
   cellItems.value = newCellItems;
 
+  // 如果需要更新sort，统一设置sort值
+  if (shouldUpdateSort) {
+    const updatedCellItems = [...newCellItems];
+    const currentParentChildren = updatedCellItems.filter(item => item.parentId === parentId);
+    
+    // 为该容器的所有子项设置sort值
+    currentParentChildren.forEach((child, index) => {
+      const globalIndex = updatedCellItems.findIndex(item => item.id === child.id);
+      if (globalIndex !== -1) {
+        updatedCellItems[globalIndex] = { ...child, sort: index };
+      }
+    });
+    
+    cellItems.value = updatedCellItems;
+    
+    console.log("更新sort值", {
+      parentId,
+      children: currentParentChildren.map(child => ({ id: child.id, sort: child.sort })),
+    });
+  }
+
   // 添加到历史记录
-  const operation = `重排序 ${parentId} 中的项目: ${fromIndex} -> ${toIndex}`;
+  const operation = `重排序 ${parentId} 中的项目: ${fromIndex} -> ${toIndex}${shouldUpdateSort ? ' (更新sort)' : ''}`;
   dragHistory.value.unshift(operation);
   if (dragHistory.value.length > 10) {
     dragHistory.value.pop();
@@ -392,8 +434,29 @@ const endDrag = () => {
     // 更新数据
     cellItems.value = newCellItems;
 
+    // 检查目标容器是否需要更新sort值
+    const targetContainerItems = newCellItems.filter(item => item.parentId === externalDragState.value.targetParentId);
+    const needsSortUpdate = targetContainerItems.length > 1 && !targetContainerItems.some(child => child.sort !== undefined);
+    
+    if (needsSortUpdate) {
+      // 为目标容器的所有子项设置sort值
+      const updatedCellItems = [...newCellItems];
+      targetContainerItems.forEach((child, index) => {
+        const globalIndex = updatedCellItems.findIndex(item => item.id === child.id);
+        if (globalIndex !== -1) {
+          updatedCellItems[globalIndex] = { ...child, sort: index };
+        }
+      });
+      cellItems.value = updatedCellItems;
+      
+      console.log("外部拖拽后更新目标容器sort值", {
+        targetParentId: externalDragState.value.targetParentId,
+        children: targetContainerItems.map(child => ({ id: child.id, sort: child.sort })),
+      });
+    }
+
     // 添加到历史记录
-    const operation = `外部拖拽添加 ${newItem.id} 到 ${externalDragState.value.targetParentId}[${externalDragState.value.targetIndex}]`;
+    const operation = `外部拖拽添加 ${newItem.id} 到 ${externalDragState.value.targetParentId}[${externalDragState.value.targetIndex}]${needsSortUpdate ? ' (更新sort)' : ''}`;
     dragHistory.value.unshift(operation);
     if (dragHistory.value.length > 10) {
       dragHistory.value.pop();

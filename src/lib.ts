@@ -1,19 +1,19 @@
 import type { App } from 'vue'
 import GridLayout from './components/GridLayout.vue'
 import Grid from './components/Grid.vue'
+import GridView from './components/GridView.vue'
+import GridItemView from './components/GridItemView.vue'
 import type { 
-  GridChildrenData, 
   GridCellData, 
   GridLayoutData, 
   GridConfig 
 } from './components/type'
 
 // 导出所有组件
-export { GridLayout, Grid }
+export { GridLayout, Grid, GridView, GridItemView }
 
 // 导出所有类型定义
 export type { 
-  GridChildrenData, 
   GridCellData, 
   GridLayoutData, 
   GridConfig 
@@ -22,7 +22,9 @@ export type {
 // 所有组件列表
 const components = [
   GridLayout,
-  Grid
+  Grid,
+  GridView,
+  GridItemView
 ]
 
 // Vue插件安装函数
@@ -51,5 +53,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     GridLayout: typeof GridLayout
     Grid: typeof Grid
+    GridView: typeof GridView
+    GridItemView: typeof GridItemView
   }
 }

@@ -1,16 +1,12 @@
-// 网格子项数据接口
-export interface GridChildrenData {
-  id: string;
-  w: number | -1; // -1 代表占满
-  h: number | -1; // -1 代表占满
-}
-
 // 扁平化的网格单元项数据接口
 export interface GridCellData {
   parentId: string;
   id: string;
   w: number | -1; // -1 代表占满
   h: number | -1; // -1 代表占满
+  sort?: number;
+
+  [key: string]: any;
 }
 
 // 网格项数据接口

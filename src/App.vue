@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import Grid from "./components/Grid.vue";
+import GridView from "./components/GridView.vue";
 
 // 网格配置
 const gridConfig = ref({
@@ -154,6 +155,9 @@ const endExternalDrag = () => {
     console.log("结束外部拖拽");
   }
 };
+
+// 显示模式：'grid' 或 'gridview'
+const displayMode = ref('grid');
 </script>
 
 <template>
@@ -163,35 +167,73 @@ const endExternalDrag = () => {
       <h1>Vue Grid Layout 拖拽演示</h1>
       <div class="controls">
         <button @click="showDebug = !showDebug">{{ showDebug ? "隐藏" : "显示" }}调试信息</button>
+        <button @click="displayMode = displayMode === 'grid' ? 'gridview' : 'grid'">
+          切换到{{ displayMode === 'grid' ? 'GridView' : 'Grid' }}模式
+        </button>
       </div>
     </div>
 
     <!-- 网格容器包装器 -->
     <div class="main-content">
-      <div
-        class="grid-wrapper"
-        :style="{
-          width: gridWrapperSize.width + 'px',
-          height: gridWrapperSize.height + 'px',
-        }"
-      >
-        <Grid
-          ref="gridRef"
-          v-model="GridLayouts"
-          v-model:cell-items="gridCellItems"
-          :config="gridConfig"
-          :show-debug="showDebug"
-          @child-moved="onChildMoved"
-          @child-click="onChildClick"
+      <div class="grid-demos">
+        <!-- Grid 演示区域 -->
+        <div
+          v-if="displayMode === 'grid'"
+          class="grid-wrapper"
+          :style="{
+            width: gridWrapperSize.width + 'px',
+            height: gridWrapperSize.height + 'px',
+          }"
         >
-          <!-- 自定义单元格内容 -->
-          <template #cell="{ item, child }">
-            <div class="custom-cell-content">
-              <div class="cell-title">{{ child.label }}</div>
-              <div class="cell-info">{{ child.parentId }} - {{ child.w }}×{{ child.h }}</div>
-            </div>
-          </template>
-        </Grid>
+          <h3 class="grid-title">Grid 演示（可拖拽）</h3>
+          <Grid
+            ref="gridRef"
+            v-model="GridLayouts"
+            v-model:cell-items="gridCellItems"
+            :config="gridConfig"
+            :show-debug="showDebug"
+            @child-moved="onChildMoved"
+            @child-click="onChildClick"
+          >
+            <!-- 自定义单元格内容 -->
+            <template #cell="{ item, child }">
+              <div class="custom-cell-content">
+                <div class="cell-title">{{ child.label }}</div>
+                <div class="cell-info">{{ child.parentId }} - {{ child.w }}×{{ child.h }}</div>
+              </div>
+            </template>
+          </Grid>
+        </div>
+
+        <!-- GridView演示区域 -->
+        <div
+          v-if="displayMode === 'gridview'"
+          class="gridview-wrapper"
+        >
+          <h3>GridView 演示（纯展示）</h3>
+          <div
+            class="gridview-container"
+            :style="{
+              width: gridWrapperSize.width + 'px',
+              height: gridWrapperSize.height + 'px',
+            }"
+          >
+            <GridView
+              :config="gridConfig"
+              :items="GridLayouts"
+              :cell-items="gridCellItems"
+            >
+              <!-- 自定义单元格内容 -->
+              <template #cell="{ item, child }">
+                <div class="custom-cell-content">
+                  <div class="cell-title">{{ child.label }}</div>
+                  <div class="cell-info">{{ child.parentId }} - {{ child.w }}×{{ child.h }}</div>
+                  <div class="cell-tag">GridView</div>
+                </div>
+              </template>
+            </GridView>
+          </div>
+        </div>
       </div>
 
       <!-- 外部拖拽演示区域 -->
@@ -253,6 +295,22 @@ const endExternalDrag = () => {
           <li>🆕 <strong>外部拖拽</strong>：按住左侧外部项目并移动鼠标到目标容器</li>
           <li>🎯 外部拖拽会根据type限制显示占位符</li>
           <li>🖱️ 在目标位置松开鼠标完成外部拖拽</li>
+          <li>🔄 <strong>模式切换</strong>：点击右上角按钮切换Grid和GridView模式</li>
+        </ul>
+
+        <h3>组件对比：</h3>
+        <ul>
+          <li>🎮 <strong>Grid组件</strong>：完整的拖拽交互功能</li>
+          <li style="margin-left: 20px">• 支持内部子项重新排序</li>
+          <li style="margin-left: 20px">• 支持跨容器拖拽</li>
+          <li style="margin-left: 20px">• 支持外部拖拽</li>
+          <li style="margin-left: 20px">• 支持type限制规则</li>
+          <li style="margin-left: 20px">• 实时视觉反馈</li>
+          <li>👁️ <strong>GridView组件</strong>：纯展示用途</li>
+          <li style="margin-left: 20px">• 只负责渲染布局</li>
+          <li style="margin-left: 20px">• 无拖拽交互</li>
+          <li style="margin-left: 20px">• 轻量级、高性能</li>
+          <li style="margin-left: 20px">• 适合只读场景</li>
         </ul>
 
         <h3>布局说明：</h3>
@@ -317,6 +375,11 @@ const endExternalDrag = () => {
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
+  margin-left: 8px;
+}
+
+.controls button:first-child {
+  margin-left: 0;
 }
 
 .controls button:hover {
@@ -329,6 +392,11 @@ const endExternalDrag = () => {
   align-items: flex-start;
 }
 
+.grid-demos {
+  display: flex;
+  gap: 20px;
+}
+
 .grid-wrapper {
   background: white;
   border-radius: 8px;
@@ -337,6 +405,13 @@ const endExternalDrag = () => {
   border: 2px solid #e1e8ed;
   box-sizing: border-box;
   flex-shrink: 0;
+}
+
+.grid-title {
+  margin: -10px 0 15px 0;
+  color: #007acc;
+  font-size: 18px;
+  text-align: center;
 }
 
 .instructions {
@@ -379,7 +454,6 @@ const endExternalDrag = () => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 4px;
   box-sizing: border-box;
 }
 
@@ -505,5 +579,41 @@ const endExternalDrag = () => {
   .external-drag-demo {
     max-width: none;
   }
+}
+
+/* GridView演示区域样式 */
+.gridview-wrapper {
+  margin-top: 20px;
+}
+
+.gridview-wrapper h3 {
+  margin: 0 0 15px 0;
+  color: #28a745;
+  font-size: 18px;
+  text-align: center;
+}
+
+.gridview-container {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 2px solid #28a745;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.gridview-cell {
+  background: #f8fff9 !important;
+  border: 1px solid #28a745 !important;
+}
+
+.gridview-cell .cell-tag {
+  font-size: 8px;
+  color: #28a745;
+  font-weight: bold;
+  margin-top: 2px;
+  padding: 1px 4px;
+  background: #e8f5e8;
+  border-radius: 2px;
 }
 </style>
