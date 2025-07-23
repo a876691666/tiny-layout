@@ -15,6 +15,7 @@
         :gap="gap"
         :direction="item.direction || 'vertical'"
         :align="item.align || 'center'"
+        :style="item.style || {}"
       >
         <!-- 传递cell slot给GridItemView -->
         <template #cell="{ item, child }">
@@ -99,4 +100,4 @@ const gridStyle = computed(() => ({
   color: #666;
   box-sizing: border-box;
 }
-</style> 
+</style>
