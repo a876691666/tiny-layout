@@ -19,7 +19,6 @@
         @move-child="handleMoveChild"
         @reorder-children="handleReorderChildren"
         @child-click="handleChildClick"
-        :grid-container="gridContainerRef"
       >
         <!-- 传递cell slot给GridLayout -->
         <template #cell="{ item, child }">
@@ -47,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, onMounted, onUnmounted } from "vue";
+import { ref, watch, onMounted, onUnmounted } from "vue";
 import GridLayout from "./GridLayout.vue";
 import type { GridLayoutData, GridConfig, GridCellData } from "./type";
 

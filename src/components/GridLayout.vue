@@ -1,5 +1,5 @@
 <template>
-  <div class="grid-item" :style="itemStyle">
+  <div ref="gridItemRef" class="grid-item" :style="itemStyle">
     <!-- 如果有子项，渲染子项 -->
     <div
       class="grid-item-children"
@@ -93,8 +93,24 @@ const props = withDefaults(defineProps<ExtendedGridLayoutDataWithDebug>(), {
   direction: "vertical", // 默认纵向排列
   align: "center", // 默认拉伸对齐
   debug: false,
-  gridContainer: null as HTMLElement | null,
 });
+
+// 组件DOM引用
+const gridItemRef = ref<HTMLElement | null>(null);
+
+// 向上查找.grid-container元素
+const findGridContainer = (): HTMLElement | null => {
+  if (!gridItemRef.value) return null;
+  
+  let element = gridItemRef.value.parentElement;
+  while (element) {
+    if (element.classList.contains('grid-container')) {
+      return element;
+    }
+    element = element.parentElement;
+  }
+  return null;
+};
 
 // 计算排序后的子项
 const sortedChildren = computed(() => {
@@ -842,7 +858,7 @@ const handleExternalMouseUp = (event: MouseEvent) => {
   }
 
   // 触发Grid组件的endDrag函数
-  const gridContainer = props.gridContainer;
+  const gridContainer = findGridContainer();
   if (gridContainer && (gridContainer as any).__gridComponent) {
     const gridComponent = (gridContainer as any).__gridComponent;
     if (gridComponent.endDrag) {
