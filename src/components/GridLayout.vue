@@ -93,6 +93,7 @@ const props = withDefaults(defineProps<ExtendedGridLayoutDataWithDebug>(), {
   direction: "vertical", // 默认纵向排列
   align: "center", // 默认拉伸对齐
   debug: false,
+  gridContainer: null as HTMLElement | null,
 });
 
 // 计算排序后的子项
@@ -841,7 +842,7 @@ const handleExternalMouseUp = (event: MouseEvent) => {
   }
 
   // 触发Grid组件的endDrag函数
-  const gridContainer = document.querySelector(".grid-container");
+  const gridContainer = props.gridContainer;
   if (gridContainer && (gridContainer as any).__gridComponent) {
     const gridComponent = (gridContainer as any).__gridComponent;
     if (gridComponent.endDrag) {

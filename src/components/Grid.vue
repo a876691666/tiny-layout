@@ -19,6 +19,7 @@
         @move-child="handleMoveChild"
         @reorder-children="handleReorderChildren"
         @child-click="handleChildClick"
+        :grid-container="gridContainerRef"
       >
         <!-- 传递cell slot给GridLayout -->
         <template #cell="{ item, child }">
