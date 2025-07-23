@@ -32,11 +32,11 @@
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
 import GridItemView from "./GridItemView.vue";
-import type { GridLayoutData, GridConfig, GridCellData } from "./type";
+import type { ExtendedGridLayoutData, GridConfig, GridCellData } from "./type";
 
 interface GridViewProps {
   config: GridConfig;
-  items: GridLayoutData[];
+  items: ExtendedGridLayoutData[];
   cellItems: GridCellData[];
 }
 

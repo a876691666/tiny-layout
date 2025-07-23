@@ -1,5 +1,5 @@
 <template>
-  <div class="grid-item-view" :style="itemStyle">
+  <div class="grid-item-view" :style="{ ...itemStyle, ...($props.style || {}) }">
     <!-- 如果有子项，渲染子项 -->
     <div
       class="grid-item-children-view"
@@ -34,17 +34,14 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
-import type { GridCellData, GridLayoutData } from "./type";
-
-interface ExtendedGridLayoutData extends GridLayoutData {
-  children?: GridCellData[];
-}
+import type { GridCellData, ExtendedGridLayoutData } from "./type";
 
 const props = withDefaults(defineProps<ExtendedGridLayoutData>(), {
   gap: 0,
   children: () => [],
   direction: "vertical", // 默认纵向排列
   align: "center", // 默认居中对齐
+  style: () => ({}),
 });
 
 // 计算排序后的子项

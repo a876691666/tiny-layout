@@ -29,7 +29,12 @@ export interface GridLayoutData {
   disabled?: boolean;
   isDragging?: boolean;
 
-  [key: string]: any;
+  [key: string]: any | undefined;
+}
+
+export interface ExtendedGridLayoutData extends GridLayoutData {
+  children?: GridCellData[];
+  style?: Record<string, any>;
 }
 
 // 网格配置接口
