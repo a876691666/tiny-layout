@@ -5,6 +5,7 @@
       class="grid-item-children"
       :class="{
         'drag-over': isDragOver,
+        'drag-allowed': isDragOver && !isCapacityExceeded,
         'capacity-exceeded': isCapacityExceeded,
         'layout-horizontal': direction === 'horizontal',
         'layout-vertical': direction === 'vertical',
@@ -65,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, inject, computed } from "vue";
+import { ref, watch, computed } from "vue";
 import type { GridCellData, GridLayoutData } from "./type";
 
 // 拖拽状态接口
@@ -746,7 +747,7 @@ const setGlobalDragState = (state: Partial<DragState>) => {
 };
 
 // 外部拖拽鼠标进入处理
-const handleExternalMouseEnter = (event: MouseEvent) => {
+const handleExternalMouseEnter = (_event: MouseEvent) => {
   const globalState = getGlobalDragState();
 
   // 只有在外部拖拽激活时才处理
@@ -840,7 +841,7 @@ const handleExternalMouseMove = (event: MouseEvent) => {
 };
 
 // 外部拖拽松手处理（模拟drop）
-const handleExternalMouseUp = (event: MouseEvent) => {
+const handleExternalMouseUp = (_event: MouseEvent) => {
   const globalState = getGlobalDragState();
 
   // 只有在外部拖拽激活且显示占位符时才处理
@@ -939,8 +940,8 @@ watch(
 }
 
 .grid-item.drag-over {
-  border-color: #ff6b6b;
-  background-color: rgba(255, 107, 107, 0.1);
+  border-color: #4caf50;
+  background-color: rgba(76, 175, 80, 0.1);
 }
 
 .grid-item-content {
@@ -1012,7 +1013,12 @@ watch(
 }
 
 .grid-item-children.drag-over {
-  background-color: rgba(255, 107, 107, 0.05);
+  background-color: rgba(107, 255, 107, 0.05);
+}
+
+.grid-item-children.drag-allowed {
+  background-color: rgba(76, 175, 80, 0.1);
+  border: 2px dashed #4caf50;
 }
 
 .grid-item-children.capacity-exceeded {
@@ -1046,13 +1052,13 @@ watch(
 }
 
 .grid-child.drag-placeholder {
-  border: 2px dashed #ff6b6b;
-  background-color: rgba(255, 107, 107, 0.1);
+  border: 2px dashed #4caf50;
+  background-color: rgba(76, 175, 80, 0.1);
 }
 
 .drag-placeholder-visual {
-  border: 2px dashed #ff6b6b;
-  background-color: rgba(255, 107, 107, 0.1);
+  border: 2px dashed #4caf50;
+  background-color: rgba(76, 175, 80, 0.1);
   border-radius: 2px;
   box-sizing: border-box;
   position: relative;
